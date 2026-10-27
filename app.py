@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from model_client import generate_reply, ModelError
-from bridge import Bridge
+from node_bridge import NodeBridge
 from workspace import Workspace
 
 ROOT = Path(__file__).resolve().parent
@@ -81,7 +81,7 @@ if not workspace.path.exists():
     previous = load_config()
     if previous['group_id'].isdigit():
         workspace.save_chat({'id':previous['group_id'],'name':previous['group'],'persona_id':'','enabled':True})
-bridge = Bridge(ROOT, load_config, workspace.resolve, lambda cfg: [c['id'] for c in workspace.read()['chats'] if c['enabled']])
+bridge = NodeBridge(ROOT, load_config, workspace, TOKEN)
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -114,16 +114,24 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('X-Local-Token') != TOKEN: self.respond(403, {'error':'请求验证失败'}); return
         try:
             length = int(self.headers.get('Content-Length', '0'))
-            if length <= 0 or length > 8192: raise ValueError('请求大小不合法')
+            if length <= 0 or length > (65536 if self.path == '/api/engine/decide' else 8192): raise ValueError('请求大小不合法')
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict): raise ValueError('请求格式不合法')
             if self.path == '/api/chat/save': self.respond(200, {'chat':workspace.save_chat(data)}); return
             if self.path == '/api/chat/delete': workspace.delete_chat(data); self.respond(200, {'ok':True}); return
             if self.path == '/api/persona/save': self.respond(200, {'persona':workspace.save_persona(data)}); return
             if self.path == '/api/persona/delete': workspace.delete_persona(data); self.respond(200, {'ok':True}); return
-            if self.path == '/api/config': self.respond(200, {'config': save_config(data)}); return
+            if self.path == '/api/config':
+                old = load_config()
+                if bridge.status()['running'] and (data.get('dry_run', old['dry_run']) != old['dry_run'] or data.get('qq_id', old['qq_id']) != old['qq_id']): raise ValueError('请先停止服务，再切换账号或演练模式')
+                self.respond(200, {'config': save_config(data)}); return
             if self.path == '/api/start': bridge.start(); self.respond(200, {'bridge':bridge.status()}); return
             if self.path == '/api/stop': bridge.stop(); self.respond(200, {'bridge':bridge.status()}); return
+            if self.path == '/api/engine/decide':
+                cfg = load_config(); text = data.get('text', ''); persona = data.get('persona', '')
+                if not isinstance(text,str) or not text.strip() or len(text)>32000 or not isinstance(persona,str) or len(persona)>1500: raise ValueError('模型请求不合法')
+                model = {'api_url':'https://api.deepseek.com/v1/chat/completions','model':cfg['model'],'api_key_env':cfg['key_env'],'timeout_seconds':40,'persona':persona}
+                result = generate_reply(text,model,retries=0); self.respond(200,{'reply':result.text}); return
             if self.path == '/api/preview':
                 cfg = load_config(); text = data.get('text', '')
                 if not isinstance(text, str) or not text.strip() or len(text) > 1000: raise ValueError('请输入不超过 1000 字的消息')

@@ -17,7 +17,7 @@ export function normalizeQQ(event, expectedAccount) {
   const mentioned = segments.some(s => s.type === 'at' && String(s.data?.qq ?? '') === self);
   const unsupported = segments.some(s => !['text','at'].includes(s.type));
   return {platform:'qq', kind, conversation_id:target, sender_id:sender, self_id:self,
-    message_id:String(event.message_id), text, mentioned, unsupported,
+    message_id:String(event.message_id), text, mentioned, unsupported, segments, message_type:unsupported?'unsupported':'text', images:[], files:[], conversation_name:String(kind === 'group' ? event.group_name ?? target : event.sender?.nickname ?? target),
     timestamp:Number(event.time ?? 0), sender_name:String(event.sender?.card ?? event.sender?.nickname ?? '')};
 }
 

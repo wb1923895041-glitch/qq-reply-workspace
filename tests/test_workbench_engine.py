@@ -1,0 +1,57 @@
+import asyncio
+import json
+import os
+import socket
+import tempfile
+import threading
+import time
+import urllib.request
+import urllib.error
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from websockets.asyncio.client import connect
+import app
+from model_client import ModelResult
+from node_bridge import NodeBridge
+from workspace import Workspace
+
+class WorkbenchEngineTest(unittest.TestCase):
+    def test_console_worker_model_and_history(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ,{'QQ_ONEBOT_TOKEN':'t'*32}):
+            root=Path(directory); data=root/'data';data.mkdir()
+            cfg={'qq_id':'111','model':'fake','key_env':'FAKE','persona':'默认','dry_run':True}
+            (data/'config.json').write_text(json.dumps(cfg),encoding='utf-8')
+            workspace=Workspace(root);p=workspace.save_persona({'name':'友好','prompt':'温暖'})
+            workspace.save_chat({'id':'333','name':'测试','persona_id':p['id'],'enabled':True})
+            token='internal-token'
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1',0)); ws_port=sock.getsockname()[1]
+            http=app.ThreadingHTTPServer(('127.0.0.1',0),app.Handler)
+            bridge=NodeBridge(root,lambda:cfg,workspace,token,internal_port=http.server_address[1],ws_port=ws_port)
+            fake=ModelResult(text='收到啦',elapsed_ms=1)
+            with patch.object(app,'load_config',return_value=cfg),patch.object(app,'TOKEN',token),patch.object(app,'bridge',bridge),patch.object(app,'generate_reply',return_value=fake) as model:
+                thread=threading.Thread(target=http.serve_forever,daemon=True);thread.start()
+                try:
+                    bridge.start()
+                    request=urllib.request.Request(f'http://127.0.0.1:{http.server_address[1]}/api/config',data=json.dumps({**cfg,'dry_run':False}).encode(),headers={'Content-Type':'application/json','X-Local-Token':token},method='POST')
+                    with self.assertRaises(urllib.error.HTTPError) as denied:urllib.request.urlopen(request)
+                    self.assertEqual(denied.exception.code,400)
+                    asyncio.run(self.exercise(bridge));self.assertTrue(model.called)
+                    self.assertEqual(bridge.history()[0]['reply'],'收到啦')
+                    self.assertEqual(bridge.history()[0]['outcome'],'preview')
+                    args,kwargs=model.call_args;self.assertIn('QQ群',args[0]);self.assertEqual(args[1]['persona'],'温暖')
+                finally:
+                    bridge.stop();http.shutdown();http.server_close();thread.join()
+            self.assertFalse(bridge.status()['running'])
+    async def exercise(self,bridge):
+        async with connect(f'ws://127.0.0.1:{bridge.ws_port}/onebot',additional_headers={'Authorization':'Bearer '+'t'*32}) as ws:
+            event={'post_type':'message','message_type':'group','group_id':333,'self_id':111,'user_id':222,'message_id':1,'time':int(time.time()),'message':[{'type':'at','data':{'qq':'111'}},{'type':'text','data':{'text':'你好'}}]}
+            await ws.send(json.dumps(event))
+            for _ in range(100):
+                if bridge.history():break
+                await asyncio.sleep(.05)
+            self.assertEqual(len(bridge.history()),1)
+            with self.assertRaises(TimeoutError):await asyncio.wait_for(ws.recv(),.15)
+
+if __name__=='__main__':unittest.main()
