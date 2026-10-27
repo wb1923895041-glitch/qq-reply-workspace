@@ -14,8 +14,10 @@ from websockets.exceptions import ConnectionClosed
 from model_client import generate_reply, load_api_key, ModelError
 
 class Bridge:
-    def __init__(self, root, load_config):
+    def __init__(self, root, load_config, resolve_chat=None, list_chats=None):
         self.root, self.load_config = Path(root), load_config
+        self.resolve_chat = resolve_chat or (lambda group,cfg: cfg if group == cfg['group_id'] else None)
+        self.list_chats = list_chats or (lambda cfg: [cfg['group_id']] if cfg['group_id'] else [])
         self.thread = self.loop = self.server = self.connection = None
         self.running = False
         self.connected = False
@@ -34,7 +36,7 @@ class Bridge:
         if self.thread and self.thread.is_alive(): raise ValueError('服务已经运行')
         cfg = self.load_config()
         if not cfg['qq_id'].isdigit(): raise ValueError('请先保存本人的 QQ 账号')
-        if not cfg['group_id'].isdigit(): raise ValueError('请先保存有效的目标群号')
+        if not self.list_chats(cfg): raise ValueError('请先添加并启用目标群聊')
         try: self.token = load_api_key('QQ_ONEBOT_TOKEN')
         except ModelError: raise ValueError('请先使用设置连接令牌入口配置 QQ_ONEBOT_TOKEN')
         self.last_error = ''; self.running = True; self.start_time = time.time(); self.seen.clear()
@@ -96,7 +98,9 @@ class Bridge:
                 if not sid or sid != cfg['qq_id'] or (self.self_id and sid != self.self_id):
                     self.last_error = 'QQ 账号不一致，连接已关闭'; await ws.close(); break
                 self.self_id = sid
-                if str(event.get('group_id')) != cfg['group_id'] or str(event.get('user_id')) == sid: continue
+                group = str(event.get('group_id') or '')
+                selected = self.resolve_chat(group,cfg)
+                if not selected or str(event.get('user_id')) == sid: continue
                 try: timestamp = int(event.get('time', 0))
                 except (ValueError, TypeError): continue
                 if timestamp < self.start_time - 5: continue
@@ -110,7 +114,7 @@ class Bridge:
                 if not text: continue
                 self.seen.add(mid)
                 if len(self.seen)>5000: self.seen = {mid}
-                try: self.queue.put_nowait((mid, sid, cfg['group_id'], text, ws))
+                try: self.queue.put_nowait((mid, sid, group, text, ws))
                 except asyncio.QueueFull: self.last_error = '消息队列已满，新消息未处理'
         except ConnectionClosed: pass
         finally:
@@ -137,7 +141,7 @@ class Bridge:
 
     def _generate(self, sid, group, text, cfg):
         with self._db() as db:
-            rows = db.execute('SELECT incoming,reply FROM messages WHERE account=? AND group_id=? AND outcome IN (?,?) ORDER BY id DESC LIMIT 8',(sid,group,'preview','accepted')).fetchall()
+            rows = db.execute('SELECT incoming,reply FROM messages WHERE account=? AND group_id=? AND outcome = ? ORDER BY id DESC LIMIT 8',(sid,group,'accepted')).fetchall()
         context = []
         for incoming,reply in reversed(rows): context.extend([{'role':'user','content':incoming},{'role':'assistant','content':reply}])
         model = {'api_url':'https://api.deepseek.com/v1/chat/completions','model':cfg['model'],'api_key_env':cfg['key_env'],'timeout_seconds':40,'persona':cfg['persona'],'context':context}
@@ -150,11 +154,11 @@ class Bridge:
         while True:
             mid,sid,group,text,ws = await self.queue.get()
             try:
-                cfg = self.load_config()
-                if cfg['group_id'] != group or cfg['qq_id'] != sid or self.connection is not ws: continue
+                cfg = self.resolve_chat(group,self.load_config())
+                if not cfg or cfg['qq_id'] != sid or self.connection is not ws: continue
                 reply = await asyncio.to_thread(self._generate,sid,group,text,cfg)
-                cfg2 = self.load_config()
-                if cfg2['group_id'] != group or cfg2['qq_id'] != sid or self.connection is not ws: continue
+                cfg2 = self.resolve_chat(group,self.load_config())
+                if not cfg2 or cfg2['qq_id'] != sid or self.connection is not ws: continue
                 if cfg['dry_run'] or cfg2['dry_run']:
                     await asyncio.to_thread(self._record,sid,group,text,reply,'preview'); continue
                 echo = uuid.uuid4().hex; future = self.loop.create_future(); self.pending[echo] = future

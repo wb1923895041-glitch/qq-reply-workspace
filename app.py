@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from model_client import generate_reply, ModelError
 from bridge import Bridge
+from workspace import Workspace
 
 ROOT = Path(__file__).resolve().parent
 DATA = ROOT / 'data'
@@ -74,7 +75,13 @@ def qq_status():
     return {'found': bool(found), 'minimized': all(found) if found else False,
             'message': ('窗口已最小化' if all(found) else '已发现 QQ 窗口') if found else '未发现 QQ 窗口'}
 
-bridge = Bridge(ROOT, load_config)
+workspace = Workspace(ROOT)
+# Upgrade a previously saved single-group configuration only when no workspace exists.
+if not workspace.path.exists():
+    previous = load_config()
+    if previous['group_id'].isdigit():
+        workspace.save_chat({'id':previous['group_id'],'name':previous['group'],'persona_id':'','enabled':True})
+bridge = Bridge(ROOT, load_config, workspace.resolve, lambda cfg: [c['id'] for c in workspace.read()['chats'] if c['enabled']])
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -89,6 +96,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/status':
             try: self.respond(200, {'qq': qq_status(), 'config': load_config(), 'bridge': bridge.status()})
             except ValueError as e: self.respond(500, {'error': str(e)})
+            return
+        if path == '/api/workspace':
+            try: self.respond(200, workspace.read())
+            except (OSError, ValueError): self.respond(500, {'error':'无法读取工作区'})
             return
         if path == '/api/history':
             try: self.respond(200, {'items': bridge.history()})
@@ -106,15 +117,17 @@ class Handler(BaseHTTPRequestHandler):
             if length <= 0 or length > 8192: raise ValueError('请求大小不合法')
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict): raise ValueError('请求格式不合法')
+            if self.path == '/api/chat/save': self.respond(200, {'chat':workspace.save_chat(data)}); return
+            if self.path == '/api/chat/delete': workspace.delete_chat(data); self.respond(200, {'ok':True}); return
+            if self.path == '/api/persona/save': self.respond(200, {'persona':workspace.save_persona(data)}); return
+            if self.path == '/api/persona/delete': workspace.delete_persona(data); self.respond(200, {'ok':True}); return
             if self.path == '/api/config': self.respond(200, {'config': save_config(data)}); return
             if self.path == '/api/start': bridge.start(); self.respond(200, {'bridge':bridge.status()}); return
             if self.path == '/api/stop': bridge.stop(); self.respond(200, {'bridge':bridge.status()}); return
             if self.path == '/api/preview':
                 cfg = load_config(); text = data.get('text', '')
                 if not isinstance(text, str) or not text.strip() or len(text) > 1000: raise ValueError('请输入不超过 1000 字的消息')
-                if not cfg['mention']: raise ValueError('请先保存被 @ 的昵称')
-                if not mentioned(text, cfg['mention']): self.respond(200, {'matched': False}); return
-                model = {'api_url':'https://api.deepseek.com/v1/chat/completions', 'model':cfg['model'], 'api_key_env':cfg['key_env'], 'timeout_seconds':40, 'identity_mode':'disclose_on_ask'}
+                model = {'api_url':'https://api.deepseek.com/v1/chat/completions', 'model':cfg['model'], 'api_key_env':cfg['key_env'], 'timeout_seconds':40, 'persona':cfg['persona']}
                 result = generate_reply(text, model, retries=0)
                 self.respond(200, {'matched':True, 'reply':result.text, 'elapsed_ms':result.elapsed_ms}); return
             self.respond(404, {'error':'未找到'})
