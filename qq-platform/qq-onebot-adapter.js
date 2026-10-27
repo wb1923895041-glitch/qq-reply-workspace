@@ -26,12 +26,24 @@ export class QQOneBotAdapter extends EventEmitter {
     super();
     if ((!server.token || String(server.token).length < 24) && !(allowInsecureLocalForTests && ['127.0.0.1','localhost','::1'].includes(server.host ?? '127.0.0.1'))) throw new TypeError('OneBot requires a token of at least 24 characters');
     if (!validId(accountId)) throw new TypeError('A numeric QQ account ID is required');
-    this.accountId=String(accountId); this.server=new ReverseOneBotServer(server); this.historyLimit=historyLimit; this.seen=new Map();
-    this.server.on('event',event=>this.receive(event));
-    this.server.on('open',()=>this.emit('open'));
-    this.server.on('close',()=>this.emit('close'));
+    this.accountId=String(accountId); this.server=new ReverseOneBotServer(server); this.historyLimit=historyLimit; this.seen=new Map(); this.verified=false;
+    this.server.on('event',event=>{if(this.verified)this.receive(event)});
+    this.server.on('open',()=>void this.verifyAccount());
+    this.server.on('close',()=>{this.verified=false;this.emit('close')});
     this.server.on('invalid',kind=>this.emit('invalid',kind));
     this.server.on('error',error=>this.emit('adapterError',error));
+  }
+  async verifyAccount() {
+    const socket=this.server.socket;
+    try {
+      const response=await this.server.action('get_login_info',{});
+      if (socket!==this.server.socket) return;
+      if (String(response.data?.user_id ?? '')!==this.accountId) throw new Error('QQ_ACCOUNT_MISMATCH');
+      this.verified=true;this.emit('open');
+    } catch(error) {
+      if (socket!==this.server.socket) return;
+      this.verified=false;this.emit('adapterError',error);socket?.destroy();
+    }
   }
   receive(event) {
     const msg=normalizeQQ(event,this.accountId); if (!msg) return;
@@ -45,6 +57,7 @@ export class QQOneBotAdapter extends EventEmitter {
   async stop(){await this.server.stop()}
   async sendText({kind,target,text}) {
     if (!['private','group'].includes(kind) || !validId(target)) throw new TypeError('Invalid QQ destination');
+    if (!this.verified) throw new Error('QQ identity not verified');
     if (typeof text!=='string' || !text.trim() || text.length>2000) throw new TypeError('Invalid message text');
     const params={ [kind==='group'?'group_id':'user_id']:Number(target),message:[{type:'text',data:{text:text.trim()}}]};
     const result=await this.server.action(kind==='group'?'send_group_msg':'send_private_msg',params);

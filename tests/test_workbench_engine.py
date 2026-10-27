@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
 import app
 from model_client import ModelResult
 from node_bridge import NodeBridge
@@ -48,6 +49,13 @@ class WorkbenchEngineTest(unittest.TestCase):
             self.assertFalse(bridge.status()['running'])
     async def exercise(self,bridge):
         async with connect(f'ws://127.0.0.1:{bridge.ws_port}/onebot',additional_headers={'Authorization':'Bearer '+'t'*32}) as ws:
+            request=json.loads(await asyncio.wait_for(ws.recv(),2))
+            self.assertEqual(request['action'],'get_login_info')
+            await ws.send(json.dumps({'echo':request['echo'],'status':'ok','retcode':0,'data':{'user_id':111}}))
+            for _ in range(40):
+                if bridge.status()['connected']:break
+                await asyncio.sleep(.05)
+            self.assertTrue(bridge.status()['connected'])
             event={'post_type':'message','message_type':'group','group_id':333,'self_id':111,'user_id':222,'message_id':1,'time':int(time.time()),'message':[{'type':'at','data':{'qq':'111'}},{'type':'text','data':{'text':'你好'}}]}
             await ws.send(json.dumps(event))
             for _ in range(100):
@@ -62,5 +70,30 @@ class WorkbenchEngineTest(unittest.TestCase):
             self.assertEqual(len(bridge.history()),2)
             self.assertEqual(bridge.history()[0]['kind'],'private')
             with self.assertRaises(TimeoutError):await asyncio.wait_for(ws.recv(),.15)
+
+    def test_mismatched_qq_never_becomes_connected(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ,{'QQ_ONEBOT_TOKEN':'t'*32}):
+            root=Path(directory); data=root/'data';data.mkdir()
+            cfg={'qq_id':'111','model':'fake','key_env':'FAKE','persona':'','dry_run':True}
+            (data/'config.json').write_text(json.dumps(cfg),encoding='utf-8')
+            workspace=Workspace(root);workspace.save_chat({'id':'333','name':'测试','persona_id':'','enabled':True})
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1',0)); ws_port=sock.getsockname()[1]
+            bridge=NodeBridge(root,lambda:cfg,workspace,'local-token',internal_port=18765,ws_port=ws_port)
+            try:
+                bridge.start();asyncio.run(self.wrong_account(bridge))
+            finally:bridge.stop()
+    async def wrong_account(self,bridge):
+        with self.assertRaises(InvalidStatus):
+            async with connect(f'ws://127.0.0.1:{bridge.ws_port}/onebot',additional_headers={'Authorization':'Bearer wrong-token'}):pass
+        async with connect(f'ws://127.0.0.1:{bridge.ws_port}/onebot',additional_headers={'Authorization':'Bearer '+'t'*32}) as ws:
+            request=json.loads(await asyncio.wait_for(ws.recv(),2))
+            self.assertEqual(request['action'],'get_login_info')
+            await ws.send(json.dumps({'echo':request['echo'],'status':'ok','retcode':0,'data':{'user_id':999}}))
+            for _ in range(50):
+                if bridge.status()['error']:break
+                await asyncio.sleep(.05)
+            self.assertFalse(bridge.status()['connected'])
+            self.assertIn('账号',bridge.status()['error'])
 
 if __name__=='__main__':unittest.main()

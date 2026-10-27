@@ -46,6 +46,8 @@ class NodeBridge:
                 if self.process is not process:break
                 if item.get('type')=='ready':self.ready.set()
                 elif item.get('type')=='connection':self.connected=item.get('connected') is True
+                elif item.get('type')=='identity_mismatch':self.last_error='连接的 QQ 账号与设置不一致，已断开'
+                elif item.get('type')=='model_error':self.last_error='模型调用失败，请检查密钥、模型和网络'
                 elif item.get('type') in ('error','send_unconfirmed'):self.last_error='QQ 通道异常或发送结果未确认，请检查连接'
                 if item.get('type') in ('preview','submitted','send_unconfirmed'):
                     self._append_event(item)

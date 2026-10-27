@@ -25,7 +25,7 @@ export class QQSocialService {
     roleFor:key=>String(this.settings().personas?.[key]??this.settings().persona??''),
     personaNameFor:()=>'',batchMs:3000,minIntervalMs:15000,privateMinIntervalMs:1000,maxPerMinute:3,maxPerTenMinutes:10,
     stickerPolicyFor:()=>({enabled:false,labelCache:false}),maxTextPartsFor:()=>1,
-    decide:async(key,prompt,meta)=>{const epoch=this.epoch;const reply=await this.decide(key,prompt.replaceAll('微信群','QQ群').replaceAll('微信好友','QQ好友').replaceAll('微信','QQ'),meta);if(epoch!==this.epoch)throw Error('QQ_CONNECTION_CHANGED');return reply;},
+    decide:async(key,prompt,meta)=>{const epoch=this.epoch;let reply;try{reply=await this.decide(key,prompt.replaceAll('微信群','QQ群').replaceAll('微信好友','QQ好友').replaceAll('微信','QQ'),meta)}catch(error){this.onEvent({type:'model_error'});throw error}if(epoch!==this.epoch)throw Error('QQ_CONNECTION_CHANGED');return reply;},
     send:async(message,text)=>{
       const cfg=this.settings();
       if(!allowed(message,cfg)) {const e=new Error('Authorization changed');e.code='NATIVE_SEND_REJECTED';throw e;}
@@ -45,7 +45,7 @@ export class QQSocialService {
   this.adapter.on('open',()=>{this.epoch++});
   this.adapter.on('close',()=>{this.epoch++;this.engine.suspendConnection()});
   this.adapter.on('message',msg=>this.receive(msg));
-  this.adapter.on('adapterError',error=>this.onEvent({type:'error',message:error.message}));
+  this.adapter.on('adapterError',error=>this.onEvent({type:error.message==='QQ_ACCOUNT_MISMATCH'?'identity_mismatch':'error'}));
  }
  receive(msg){
   const cfg=this.settings();
