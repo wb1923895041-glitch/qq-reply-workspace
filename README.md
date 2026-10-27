@@ -31,3 +31,7 @@ Windows 本地 QQ 群助手，提供概览、聊天管理、人格中心、历�
 ## 开发和验证
 
 安装 `requirements.txt`，执行 `python -m unittest discover -s tests -v`。项目不包含 QQ 客户端、账号、密钥和私人聊天数据。OneBot 为通信协议，需要用户自行准备兼容客户端；不同客户端可能需要调整配置并实测。
+
+## 实验性平台移植
+
+`qq-platform/` 是基于 WeChatAgent 消息桥协议层的新 QQ 适配实验，支持标准化群聊及私聊事件、发送请求、去重；本机模拟 OneBot WebSocket 测试通过。它尚未连接当前工作台或 WeChatAgent 引擎，也未经真实 QQ 验证。运行 `node --test qq-platform/tests/*.test.js`（Node.js 22+）。上游许可见 `qq-platform/UPSTREAM-LICENSE.txt`。
