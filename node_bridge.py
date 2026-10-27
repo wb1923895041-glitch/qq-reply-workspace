@@ -20,7 +20,7 @@ class NodeBridge:
             if self.process and self.process.poll() is None: raise ValueError('服务已经运行')
             cfg=self.load_config()
             if not cfg['qq_id'].isdigit(): raise ValueError('请先保存本人的 QQ 账号')
-            if not any(c.get('enabled') for c in self.workspace.read()['chats']): raise ValueError('请先添加并启用目标群聊')
+            if not any(c.get('enabled') for c in self.workspace.read()['chats']): raise ValueError('请先添加并启用聊天')
             try: onebot=load_api_key('QQ_ONEBOT_TOKEN')
             except ModelError: raise ValueError('请先通过设置连接令牌入口配置 QQ_ONEBOT_TOKEN')
             if len(onebot)<24: raise ValueError('QQ 连接令牌至少需要 24 个字符')
@@ -84,5 +84,5 @@ class NodeBridge:
                 try:item=json.loads(line)
                 except ValueError:continue
                 if item.get('account')!=account:continue
-                records.append({'time':item.get('time',0),'group_id':item.get('target',''),'incoming':item.get('incoming',''),'reply':item.get('text',''),'outcome':{'preview':'preview','submitted':'accepted','send_unconfirmed':'uncertain'}.get(item.get('type'),'uncertain')})
+                records.append({'time':item.get('time',0),'group_id':item.get('target',''),'kind':item.get('kind','group'),'incoming':item.get('incoming',''),'reply':item.get('text',''),'outcome':{'preview':'preview','submitted':'accepted','send_unconfirmed':'uncertain'}.get(item.get('type'),'uncertain')})
         return list(reversed(records[-30:]))

@@ -40,7 +40,7 @@ def save_config(data):
         else:
             if not isinstance(value, str) or len(value) > (1500 if k == 'persona' else 100): raise ValueError('配置字段不合法')
             cfg[k] = value.strip()
-    if cfg['qq_id'] and not re.fullmatch(r'[0-9]{1,16}', cfg['qq_id']): raise ValueError('QQ 账号必须为数字')
+    if cfg['qq_id'] and (not re.fullmatch(r'[1-9][0-9]{0,15}', cfg['qq_id']) or int(cfg['qq_id'])>9007199254740991): raise ValueError('请输入有效的 QQ 账号')
     if cfg['group_id'] and not re.fullmatch(r'[0-9]{1,16}', cfg['group_id']): raise ValueError('群号必须为数字')
     if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', cfg['key_env']): raise ValueError('环境变量名不合法')
     if not re.fullmatch(r'[A-Za-z0-9._-]+', cfg['model']): raise ValueError('模型名不合法')
@@ -130,7 +130,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/engine/decide':
                 cfg = load_config(); text = data.get('text', ''); persona = data.get('persona', '')
                 if not isinstance(text,str) or not text.strip() or len(text)>32000 or not isinstance(persona,str) or len(persona)>1500: raise ValueError('模型请求不合法')
-                model = {'api_url':'https://api.deepseek.com/v1/chat/completions','model':cfg['model'],'api_key_env':cfg['key_env'],'timeout_seconds':40,'persona':persona}
+                model = {'api_url':'https://api.deepseek.com/v1/chat/completions','model':cfg['model'],'api_key_env':cfg['key_env'],'timeout_seconds':40,'persona':persona,'chat_kind':data.get('kind','group')}
                 result = generate_reply(text,model,retries=0); self.respond(200,{'reply':result.text}); return
             if self.path == '/api/preview':
                 cfg = load_config(); text = data.get('text', '')

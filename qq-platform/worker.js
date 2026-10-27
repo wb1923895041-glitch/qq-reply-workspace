@@ -11,12 +11,12 @@ const internalPort=Number(process.env.QQ_AGENT_INTERNAL_PORT || 18765), wsPort=N
 if(!Number.isInteger(internalPort)||internalPort<1||internalPort>65535||!Number.isInteger(wsPort)||wsPort<1||wsPort>65535)throw Error('Invalid port');
 const settings=()=>{
  const c=read('config.json',{}),w=read('workspace.json',{chats:[],personas:[]});
- const personas={};for(const chat of w.chats??[]){const p=(w.personas??[]).find(x=>x.id===chat.persona_id);if(p)personas[`qq:group:${chat.id}`]=p.prompt}
- return {accountId:String(c.qq_id??''),groups:(w.chats??[]).filter(x=>x.enabled).map(x=>String(x.id)),private:[],persona:String(c.persona??''),personas,dryRun:initial.dry_run!==false || c.dry_run!==false};
+ const personas={};for(const chat of w.chats??[]){const p=(w.personas??[]).find(x=>x.id===chat.persona_id);if(p)personas[`qq:${chat.kind ?? 'group'}:${chat.id}`]=p.prompt}
+ return {accountId:String(c.qq_id??''),groups:(w.chats??[]).filter(x=>x.enabled&&(x.kind??'group')==='group').map(x=>String(x.id)),private:(w.chats??[]).filter(x=>x.enabled&&x.kind==='private').map(x=>String(x.id)),persona:String(c.persona??''),personas,dryRun:initial.dry_run!==false || c.dry_run!==false};
 };
 const emit=data=>process.stdout.write(JSON.stringify(data)+'\n');
 const model=async(key,prompt,metadata)=>{
- const response=await fetch(`http://127.0.0.1:${internalPort}/api/engine/decide`,{method:'POST',headers:{'Content-Type':'application/json','X-Local-Token':internal},body:JSON.stringify({text:prompt,persona:metadata.persona||''}),signal:AbortSignal.timeout(50000)});
+ const response=await fetch(`http://127.0.0.1:${internalPort}/api/engine/decide`,{method:'POST',headers:{'Content-Type':'application/json','X-Local-Token':internal},body:JSON.stringify({text:prompt,persona:metadata.persona||'',kind:key.startsWith('qq:private:')?'private':'group'}),signal:AbortSignal.timeout(50000)});
  const result=await response.json();if(!response.ok)throw Error(result.error||'model unavailable');return 'RESPOND: '+result.reply;
 };
 const svc=new QQSocialService({stateDir:path.join(root,'data','engine',String(initial.qq_id)),accountId:initial.qq_id,onebot:{host:'127.0.0.1',port:wsPort,path:'/onebot',token},settings,decide:model,onEvent:e=>emit(e)});

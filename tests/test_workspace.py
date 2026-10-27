@@ -22,4 +22,15 @@ class WorkspaceTest(unittest.TestCase):
             with self.assertRaises(ValueError): w.save_chat({'id':'123','enabled':True,'persona_id':'nope'})
             self.assertEqual(w.read()['chats'],[])
 
+    def test_same_number_private_and_group_are_separate(self):
+        with tempfile.TemporaryDirectory() as d:
+            w=Workspace(d)
+            w.save_chat({'id':'1234','kind':'group','name':'群','enabled':True})
+            w.save_chat({'id':'1234','kind':'private','name':'好友','enabled':True})
+            self.assertEqual(len(w.read()['chats']),2)
+            w.delete_chat({'id':'1234','kind':'private'})
+            self.assertEqual(w.read()['chats'][0]['kind'],'group')
+            with self.assertRaises(ValueError): w.save_chat({'id':'0001','kind':'private','enabled':True})
+            with self.assertRaises(ValueError): w.save_chat({'id':'9007199254740992','kind':'group','enabled':True})
+
 if __name__=='__main__': unittest.main()

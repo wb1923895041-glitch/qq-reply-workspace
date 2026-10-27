@@ -24,6 +24,7 @@ class WorkbenchEngineTest(unittest.TestCase):
             (data/'config.json').write_text(json.dumps(cfg),encoding='utf-8')
             workspace=Workspace(root);p=workspace.save_persona({'name':'友好','prompt':'温暖'})
             workspace.save_chat({'id':'333','name':'测试','persona_id':p['id'],'enabled':True})
+            workspace.save_chat({'id':'222','kind':'private','name':'好友','persona_id':'','enabled':True})
             token='internal-token'
             with socket.socket() as sock:
                 sock.bind(('127.0.0.1',0)); ws_port=sock.getsockname()[1]
@@ -40,7 +41,8 @@ class WorkbenchEngineTest(unittest.TestCase):
                     asyncio.run(self.exercise(bridge));self.assertTrue(model.called)
                     self.assertEqual(bridge.history()[0]['reply'],'收到啦')
                     self.assertEqual(bridge.history()[0]['outcome'],'preview')
-                    args,kwargs=model.call_args;self.assertIn('QQ群',args[0]);self.assertEqual(args[1]['persona'],'温暖')
+                    args,kwargs=model.call_args;self.assertIn('QQ好友',args[0]);self.assertEqual(args[1]['chat_kind'],'private')
+                    first_args=model.call_args_list[0].args;self.assertIn('QQ群',first_args[0]);self.assertEqual(first_args[1]['persona'],'温暖')
                 finally:
                     bridge.stop();http.shutdown();http.server_close();thread.join()
             self.assertFalse(bridge.status()['running'])
@@ -52,6 +54,13 @@ class WorkbenchEngineTest(unittest.TestCase):
                 if bridge.history():break
                 await asyncio.sleep(.05)
             self.assertEqual(len(bridge.history()),1)
+            private={**event,'message_type':'private','message_id':2,'message':[{'type':'text','data':{'text':'私聊你好'}}]}
+            await ws.send(json.dumps(private))
+            for _ in range(100):
+                if len(bridge.history())==2:break
+                await asyncio.sleep(.05)
+            self.assertEqual(len(bridge.history()),2)
+            self.assertEqual(bridge.history()[0]['kind'],'private')
             with self.assertRaises(TimeoutError):await asyncio.wait_for(ws.recv(),.15)
 
 if __name__=='__main__':unittest.main()
